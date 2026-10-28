@@ -105,6 +105,19 @@ Promise-returning/async function to debounce.
 
 Type: `object`
 
+##### wait
+
+Type: `number`\
+Default: `0`
+
+Minimum milliseconds between execution starts, including the time spent executing the function. Must be a finite number between `0` and `2147483647`.
+
+The first execution starts immediately. Its callers settle after both the function and the minimum window finish, including when it rejects. Calls made during the window share that result by default. With `after: true`, they queue the latest arguments for execution after the window. A function that takes longer than `wait` does not incur an extra delay.
+
+```js
+const save = pDebounce.promise(saveDocument, {after: true, wait: 100});
+```
+
 ##### after
 
 Type: `boolean`\

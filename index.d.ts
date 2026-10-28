@@ -18,6 +18,17 @@ export type Options = {
 
 export type PromiseOptions = {
 	/**
+	Minimum milliseconds between execution starts, including execution time.
+
+	The first execution starts immediately. Its callers settle after both the function and this minimum window finish, including when the function rejects. Calls within the window share its result by default, or queue the latest arguments with `after: true`.
+
+	Must be a finite number between 0 and 2147483647.
+
+	@default 0
+	*/
+	readonly wait?: number;
+
+	/**
 	If a call is made while a previous call is still running, queue the latest arguments and run the function again after the current execution completes.
 
 	Each caller settles as soon as the execution it is waiting for completes. Calls queued during the same execution share the result of the latest one.

@@ -56,3 +56,7 @@ expectType<(isNumber: boolean) => Promise<number | string>>(pDebounce.promise(ei
 // Test nested promise is flattened like at runtime
 declare const nestedPromise: () => Promise<Promise<number>>;
 expectType<() => Promise<number>>(pDebounce(nestedPromise, 200));
+
+expectType<(input: number) => Promise<number>>(pDebounce.promise(expensiveCall, {after: true, wait: 100}));
+expectType<(input: number) => Promise<number>>(pDebounce.promise(expensiveCall, {wait: 100}));
+expectError(pDebounce.promise(expensiveCall, {wait: '100'}));

@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import {strict as assert} from 'node:assert';
-import {setTimeout as delay} from 'node:timers/promises';
+import {setTimeout as delay, setImmediate as nextTurn} from 'node:timers/promises';
 import v8 from 'node:v8';
 import vm from 'node:vm';
 import pDebounce from './index.js';
@@ -2028,3 +2028,107 @@ test('before option does not retain the leading value when the leading call abor
 	await collectGarbage();
 	assert.equal(reference.deref(), undefined);
 });
+
+const mockPromiseTime = t => {
+	t.mock.timers.enable({apis: ['setTimeout', 'Date'], now: 0});
+	t.mock.method(performance, 'now', () => Date.now());
+};
+
+test('.promise() wait spaces queued calls and counts execution time', async t => {
+	mockPromiseTime(t);
+	const starts = [];
+	const firstGate = Promise.withResolvers();
+	const secondGate = Promise.withResolvers();
+	const gates = [firstGate, secondGate];
+	const debounced = pDebounce.promise(async value => {
+		starts.push(performance.now());
+		await gates.shift().promise;
+		return value;
+	}, {after: true, wait: 80});
+
+	const first = debounced('first');
+	const second = debounced('second');
+	const latest = debounced('latest');
+	t.assert.strictEqual(second, latest);
+	t.mock.timers.tick(30);
+	firstGate.resolve();
+	await nextTurn();
+	t.mock.timers.tick(49);
+	await nextTurn();
+	t.assert.deepStrictEqual(starts, [0]);
+	t.mock.timers.tick(1);
+	await nextTurn();
+	t.assert.deepStrictEqual(starts, [0, 80]);
+	t.assert.strictEqual(await first, 'first');
+	t.mock.timers.tick(30);
+	secondGate.resolve();
+	await nextTurn();
+	t.mock.timers.tick(50);
+	t.assert.deepStrictEqual(await Promise.all([first, second, latest]), ['first', 'latest', 'latest']);
+});
+
+test('.promise() wait does not add a full delay after a slow execution', async t => {
+	mockPromiseTime(t);
+	const gate = Promise.withResolvers();
+	const debounced = pDebounce.promise(() => gate.promise, {after: true, wait: 30});
+	let isSettled = false;
+	const promise = debounced().then(() => {
+		isSettled = true;
+	});
+	t.mock.timers.tick(80);
+	gate.resolve();
+	await nextTurn();
+	t.assert.strictEqual(isSettled, true);
+	await promise;
+});
+
+test('.promise() wait keeps completed calls shared until the window ends', async t => {
+	mockPromiseTime(t);
+	let calls = 0;
+	const debounced = pDebounce.promise(() => ++calls, {wait: 60});
+	const first = debounced();
+	await nextTurn();
+	t.mock.timers.tick(20);
+	t.assert.strictEqual(debounced(), first);
+	t.mock.timers.tick(40);
+	t.assert.strictEqual(await first, 1);
+	const second = debounced();
+	await nextTurn();
+	t.mock.timers.tick(60);
+	t.assert.strictEqual(await second, 2);
+});
+
+test('.promise() wait preserves rejection and still runs the queued call', async t => {
+	mockPromiseTime(t);
+	const reason = Symbol('failure');
+	const starts = [];
+	const debounced = pDebounce.promise(value => {
+		starts.push(performance.now());
+		if (value === 'fail') {
+			throw reason;
+		}
+
+		return value;
+	}, {after: true, wait: 60});
+	const first = t.assert.rejects(debounced('fail'), error => error === reason);
+	const next = debounced('success');
+	await nextTurn();
+	t.mock.timers.tick(60);
+	await nextTurn();
+	await first;
+	t.assert.deepStrictEqual(starts, [0, 60]);
+	t.mock.timers.tick(60);
+	t.assert.strictEqual(await next, 'success');
+});
+
+for (const wait of [NaN, Infinity, '50']) {
+	test(`.promise() rejects invalid wait ${String(wait)}`, t => {
+		t.assert.throws(() => pDebounce.promise(() => {}, {wait}), TypeError);
+	});
+}
+
+for (const wait of [-1, 2_147_483_648]) {
+	test(`.promise() rejects out-of-range wait ${wait}`, t => {
+		t.assert.throws(() => pDebounce.promise(() => {}, {wait}), RangeError);
+	});
+}

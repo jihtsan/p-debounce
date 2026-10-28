@@ -103,17 +103,26 @@ const pDebounce = (functionToDebounce, wait, options = {}) => {
 };
 
 pDebounce.promise = (function_, options = {}) => {
+	const wait = options.wait ?? 0;
+	if (!Number.isFinite(wait)) {
+		throw new TypeError('Expected `wait` to be a finite number');
+	}
+
+	if (wait < 0 || wait > 2_147_483_647) {
+		throw new RangeError('Expected `wait` to be between 0 and 2147483647 milliseconds');
+	}
+
 	let currentPromise;
 	let queuedCall;
 
 	const run = (context, arguments_) => {
 		const {promise, resolve} = Promise.withResolvers();
+		const started = performance.now();
 
 		// Mark as busy before calling `function_`, so a synchronous re-entrant call does not start a concurrent execution.
 		currentPromise = promise;
 
-		// Use `.finally()` instead of `try`/`finally`, so a synchronous throw does not clear the busy state before immediate callers can share the rejection.
-		resolve((async () => function_.apply(context, arguments_))().finally(() => {
+		const finish = () => {
 			// Stay busy while the queued call runs, so calls never overlap, but settle this call's callers right away instead of after the whole queue.
 			if (queuedCall) {
 				const call = queuedCall;
@@ -122,6 +131,18 @@ pDebounce.promise = (function_, options = {}) => {
 			} else {
 				currentPromise = undefined;
 			}
+		};
+
+		// Use `.finally()` so immediate callers still share synchronous rejections.
+		resolve((async () => function_.apply(context, arguments_))().finally(() => {
+			const remaining = wait - (performance.now() - started);
+			if (remaining > 0) {
+				return new Promise(resolveWait => {
+					setTimeout(resolveWait, remaining);
+				}).then(finish);
+			}
+
+			finish();
 		}));
 
 		return promise;
